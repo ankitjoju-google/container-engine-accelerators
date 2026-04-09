@@ -239,23 +239,25 @@ func enableGriddDaemon(ctx context.Context, machineType string) error {
 		rootMountDir = "/root"
 	}
 
-	// Link necessary libraries manually
+	// Map the host library paths via the root mount
 	hostLib64 := rootMountDir + "/lib64"
 	hostUsrLib64 := rootMountDir + "/usr/lib64"
-	linkerPath := rootMountDir + "/lib64/ld-linux-x86-64.so.2"
 
-	glog.InfoContextf(ctx, "Waiting for dynamic linker %s to appear...", linkerPath)
-	for {
-		if _, err := os.Stat(linkerPath); err == nil {
-			break
-		}
-		time.Sleep(10 * time.Second)
+	glog.InfoContextf(ctx, "Starting nvidia-gridd daemon natively with injected LD_LIBRARY_PATH...")
+
+	// Grab the existing LD_LIBRARY_PATH from the YAML env vars
+	existingLD := os.Getenv("LD_LIBRARY_PATH")
+
+	// Combine the existing path, the NVIDIA libs, and the host libs
+	libPaths := []string{griddLibsPath, hostLib64, hostUsrLib64}
+	if existingLD != "" {
+		libPaths = append([]string{existingLD}, libPaths...)
 	}
+	libPathStr := strings.Join(libPaths, ":")
 
-	glog.InfoContextf(ctx, "Starting nvidia-gridd daemon via host dynamic linker: %s", linkerPath)
-
-	libPathStr := strings.Join([]string{griddLibsPath, hostLib64, hostUsrLib64}, ":")
-	cmd := exec.Command(linkerPath, "--library-path", libPathStr, griddPath)
+	// Execute the binary natively, passing in the customized library path
+	cmd := exec.Command(griddPath)
+	cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+libPathStr)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
